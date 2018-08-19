@@ -9,6 +9,8 @@
 #include "oslib/audiobackend_pulseaudio.h"
 #include "oslib/audiobackend_coreaudio.h"
 #include "oslib/audiobackend_omx.h"
+#include "oslib/audiobackend_portaudio.h"
+#include "oslib/audiobackend_libao.h"
 
 struct SoundFrame { s16 l;s16 r; };
 #define SAMPLE_COUNT 512
@@ -89,6 +91,12 @@ void RegisterAllAudioBackends() {
 		#endif
 		#if USE_PULSEAUDIO
 		RegisterAudioBackend(&audiobackend_pulseaudio);
+		#endif
+		#if USE_LIBAO
+		RegisterAudioBackend(&audiobackend_libao);
+		#endif
+		#if USE_PORTAUDIO
+		RegisterAudioBackend(&audiobackend_portaudio);
 		#endif
         #if HOST_OS == OS_DARWIN
         RegisterAudioBackend(&audiobackend_coreaudio);
