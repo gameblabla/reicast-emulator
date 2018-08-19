@@ -111,8 +111,10 @@ char reios_software_company[17];
 char reios_software_name[129];
 char reios_bootfile[32];
 
-char* reios_disk_id() {
+bool pre_init = false;
 
+void reios_pre_init()
+{
 	if (libGDR_GetDiscType() == GdRom) {
 		base_fad = 45150;
 		descrambl = false;
@@ -124,6 +126,12 @@ char* reios_disk_id() {
 		base_fad = (ses[3] << 16) | (ses[4] << 8) | (ses[5] << 0);
 		descrambl = true;
 	}
+	pre_init = true;
+}
+
+char* reios_disk_id() {
+	
+	if (!pre_init) reios_pre_init();
 	
 	libGDR_ReadSector(GetMemPtr(0x8c008000, 0), base_fad, 256, 2048);
 	memset(ip_bin, 0, sizeof(ip_bin));
@@ -145,17 +153,7 @@ char* reios_disk_id() {
 
 const char* reios_locate_ip() {
 
-	if (libGDR_GetDiscType() == GdRom) {
-		base_fad = 45150;
-		descrambl = false;
-	}
-	else {
-		u8 ses[6];
-		libGDR_GetSessionInfo(ses, 0);
-		libGDR_GetSessionInfo(ses, ses[2]);
-		base_fad = (ses[3] << 16) | (ses[4] << 8) | (ses[5] << 0);
-		descrambl = true;
-	}
+	if (!pre_init) reios_pre_init();
 
 	printf("reios: loading ip.bin from FAD: %d\n", base_fad);
 
