@@ -15,14 +15,14 @@ function(add_directory dir)
 endfunction()
 
 # Options
-option(USE_SDL "Use SDL" OFF)
+option(USE_SDL "Use SDL" ON)
 option(USE_OSS "Use OSS" ON)
 option(USE_ALSA "Use ALSA" ON)
-option(USE_GLES "Use GL ES" OFF)
+option(USE_GLES "Use GL ES" ON)
 option(USE_PULSEAUDIO "Use PulseAudio" OFF)
 option(USE_WEBUI "Use WebUI" ON)
 option(USE_REND "Use some rendering" ON)
-option(USE_EVDEV "Use EVDEV" ON)
+option(USE_EVDEV "Use EVDEV" OFF)
 option(USE_JOYSTICK "Use Joystick" ON)
 
 # Flags
@@ -117,7 +117,7 @@ add_directory(core/deps/libpng)
 list(APPEND libs GL z)
 
 if(NOT WINDOWS AND NOT APPLE)
-  add_definitions(-DSUPPORT_X11)
+#add_definitions(-DSUPPORT_X11)
 endif()
 
 if("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
@@ -166,11 +166,16 @@ else()
   list(APPEND libs dl GL)
 endif()
 
+
 if(USE_SDL)
-  list(APPEND source core/sdl/main.cpp)
-elseif("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
-  add_directory(core/linux-dist)
+   add_directory(core/sdl)
+   add_definitions(-DUSE_SDL)
+   list(APPEND libs SDL2)
 endif()
+
+#if("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
+#  add_directory(core/linux-dist)
+#endif()
 
 if(WINDOWS)
   add_directory(core/rend/d3d11)

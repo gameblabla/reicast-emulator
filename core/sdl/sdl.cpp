@@ -1,4 +1,17 @@
 #if defined(USE_SDL)
+
+#include <unistd.h>
+#include <poll.h>
+#include <termios.h>
+#include <fcntl.h>
+#include <semaphore.h>
+#include <stdarg.h>
+#include <signal.h>
+#include <sys/param.h>
+#include <sys/mman.h>
+#include <sys/time.h>
+
+
 #include "types.h"
 #include "cfg/cfg.h"
 #include "linux-dist/main.h"
@@ -52,7 +65,53 @@ const u32* sdl_map_axis = sdl_map_axis_usb;
 u32  JSensitivity[256];  // To have less sensitive value on nubs
 #endif
 
-void input_sdl_init()
+u16 kcode[4];
+extern u32 vks[4];
+u8 rt[4], lt[4];
+s8 joyx[4], joyy[4];
+
+int msgboxf(const wchar* text, unsigned int type, ...)
+{
+	va_list args;
+
+	wchar temp[2048];
+	va_start(args, type);
+	vsprintf(temp, text, args);
+	va_end(args);
+
+	//printf(NULL,temp,VER_SHORTNAME,type | MB_TASKMODAL);
+	puts(temp);
+	return MBX_OK;
+}
+
+void os_DebugBreak()
+{
+}
+
+void* x11_win = 0;
+void* x11_disp = 0;
+void* x11_glc = 0;
+
+void* libPvr_GetRenderTarget()
+{
+	return x11_win;
+}
+
+void* libPvr_GetRenderSurface()
+{
+	return x11_disp;
+}
+
+int get_mic_data(u8* buffer) { return 0; }
+int push_vmu_screen(u8* buffer) { return 0; }
+void UpdateVibration(u32 port, u32 value) { }
+void common_linux_setup();
+int dc_init(int argc,wchar* argv[]);
+void dc_run();
+void dc_term();
+
+
+void os_SetupInput()
 {
 	if (SDL_WasInit(SDL_INIT_JOYSTICK) == 0)
 	{
@@ -118,7 +177,7 @@ void input_sdl_init()
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 }
 
-void input_sdl_handle(u32 port)
+void UpdateInputState(u32 port)
 {
 	static int keys[13];
 	static int mouse_use = 0;
@@ -155,38 +214,6 @@ void input_sdl_handle(u32 port)
 					case SDLK_RCTRL:    keys[10] = value; break;
 					case SDLK_LALT:     keys[12] = value; break;
 					case SDLK_k:        KillTex = true; break;
-				#if defined(TARGET_PANDORA)
-					case SDLK_n:
-						if (value)
-						{
-							mouse_use = (mouse_use + 1) % 4;
-							snprintf(OSD_Info, 128, "Right Nub mode: %s\n", num_mode[mouse_use]);
-							OSD_Delay=300;
-						}
-						break;  
-					case SDLK_s:
-						if (value)
-						{
-							settings.aica.NoSound = !settings.aica.NoSound;
-							snprintf(OSD_Info, 128, "Sound %s\n", (settings.aica.NoSound) ? "Off" : "On");
-							OSD_Delay=300;
-						}
-						break;
-					case SDLK_f:
-						if (value)
-						{
-							FrameSkipping = !FrameSkipping;
-							snprintf(OSD_Info, 128, "FrameSkipping %s\n", (FrameSkipping) ? "On" : "Off");
-							OSD_Delay = 300;
-						}
-						break;  
-					case SDLK_c:
-						if (value)
-						{
-							OSD_Counter = 1 - OSD_Counter;
-						}
-						break;
-				#endif
 				}
 				break;
 			case SDL_JOYBUTTONDOWN:
@@ -231,10 +258,6 @@ void input_sdl_handle(u32 port)
 					
 					//printf("AXIS %d,%d\n",JE.number,JE.value);
 					s8 v=(s8)(value/256); //-127 ... + 127 range
-					#ifdef TARGET_PANDORA
-						v = JSensitivity[128+v];
-					#endif
-					
 					if (mt == 0)
 					{
 						kcode[port] |= mo;
@@ -386,19 +409,121 @@ void input_sdl_handle(u32 port)
 	}
 }
 
-void sdl_window_set_text(const char* text)
+void os_DoEvents()
 {
-	#ifdef TARGET_PANDORA
-		strncpy(OSD_Counters, text, 256);
-	#else
-		if(window)
-		{
-			SDL_SetWindowTitle(window, text);    // *TODO*  Set Icon also...
-		}
-	#endif
 }
 
-void sdl_window_create()
+string find_user_config_dir()
+{
+	// Unable to detect config dir, use the current folder
+	return ".";
+}
+
+string find_user_data_dir()
+{
+	// Unable to detect config dir, use the current folder
+	return ".";
+}
+
+std::vector<string> find_system_config_dirs()
+{
+	std::vector<string> dirs;
+	if (getenv("XDG_CONFIG_DIRS") != NULL)
+	{
+		string s = (string)getenv("XDG_CONFIG_DIRS");
+
+		string::size_type pos = 0;
+		string::size_type n = s.find(":", pos);
+		while(n != std::string::npos)
+		{
+			dirs.push_back(s.substr(pos, n-pos) + "/reicast");
+			pos = n + 1;
+			n = s.find(":", pos);
+		}
+		// Separator not found
+		dirs.push_back(s.substr(pos) + "/reicast");
+	}
+	else
+	{
+		dirs.push_back("/etc/reicast"); // This isn't part of the XDG spec, but much more common than /etc/xdg/
+		dirs.push_back("/etc/xdg/reicast");
+	}
+	return dirs;
+}
+
+std::vector<string> find_system_data_dirs()
+{
+	std::vector<string> dirs;
+	if (getenv("XDG_DATA_DIRS") != NULL)
+	{
+		string s = (string)getenv("XDG_DATA_DIRS");
+
+		string::size_type pos = 0;
+		string::size_type n = s.find(":", pos);
+		while(n != std::string::npos)
+		{
+			dirs.push_back(s.substr(pos, n-pos) + "/reicast");
+			pos = n + 1;
+			n = s.find(":", pos);
+		}
+		// Separator not found
+		dirs.push_back(s.substr(pos) + "/reicast");
+	}
+	else
+	{
+		dirs.push_back("/usr/local/share/reicast");
+		dirs.push_back("/usr/share/reicast");
+	}
+	return dirs;
+}
+
+int main(int argc, wchar* argv[])
+{
+	/* Set directories */
+	set_user_config_dir(find_user_config_dir());
+	set_user_data_dir(find_user_data_dir());
+	std::vector<string> dirs;
+	dirs = find_system_config_dirs();
+	for(unsigned int i = 0; i < dirs.size(); i++)
+	{
+		add_system_data_dir(dirs[i]);
+	}
+	dirs = find_system_data_dirs();
+	for(unsigned int i = 0; i < dirs.size(); i++)
+	{
+		add_system_data_dir(dirs[i]);
+	}
+	printf("Config dir is: %s\n", get_writable_config_path("/").c_str());
+	printf("Data dir is:   %s\n", get_writable_data_path("/").c_str());
+
+	#if defined(USE_SDL)
+	if (SDL_Init(0) != 0)
+	{
+		die("SDL: Initialization failed!");
+	}
+	#endif
+
+	common_linux_setup();
+
+	settings.profile.run_counts=0;
+
+	dc_init(argc,argv);
+
+	dc_run();
+	
+	dc_term();
+	return 0;
+}
+
+void os_SetWindowText(const char* text)
+{
+	if(window)
+	{
+		SDL_SetWindowTitle(window, text);    // *TODO*  Set Icon also...
+	}
+}
+
+void os_CreateWindow()
 {
 	if (SDL_WasInit(SDL_INIT_VIDEO) == 0)
 	{
@@ -412,12 +537,7 @@ void sdl_window_create()
 	int window_height = cfgLoadInt("x11","height", WINDOW_HEIGHT);
 
 	int flags = SDL_WINDOW_OPENGL;
-	#ifdef TARGET_PANDORA
-		flags |= SDL_FULLSCREEN;
-	#else
-		flags |= SDL_SWSURFACE;
-	#endif
-
+	
 	#ifdef GLES
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
@@ -457,11 +577,12 @@ extern int screen_width, screen_height;
 bool gl_init(void* wind, void* disp)
 {
 	SDL_GL_MakeCurrent(window, glcontext);
-	#ifdef GLES
+	return true;
+	/*#ifdef GLES
 		return true;
 	#else
 		return gl3wInit() != -1 && gl3wIsSupported(3, 1);
-	#endif
+	#endif*/
 }
 
 void gl_swap()
